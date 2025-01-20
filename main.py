@@ -1,28 +1,35 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException, Request
+from typing import List, Optional
 import requests
 from bs4 import BeautifulSoup
 
-app = Flask(__name__)
+app = FastAPI()
 
-@app.route('/scrape', methods=['GET'])
-def scrape():
-    # Pega a URL via query param (ex: /scrape?url=https://makeone.com.br/blog/)
-    url = request.args.get("url")
+@app.get("/scrape")
+def scrape(url: Optional[str] = None):
+    """
+    Exemplo de endpoint:
+      GET /scrape?url=https://makeone.com.br/blog/
+    Retorna um array JSON de posts.
+    """
     if not url:
-        return jsonify({"error": "No URL provided"}), 400
-    
-    # Faz o GET da página
+        raise HTTPException(status_code=400, detail="No URL provided")
+
+    # Faz a requisição HTTP
     resp = requests.get(url)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Failed to GET {url}")
+
     html = resp.text
 
-    # Faz o parse com BeautifulSoup
+    # Parse do HTML via BeautifulSoup
     soup = BeautifulSoup(html, 'html.parser')
 
-    # Exemplo: extrair posts do blog MakeOne
+    # Extrair posts do blog MakeOne (ajuste conforme necessidade)
     posts = []
     for article in soup.select('article.elementor-post'):
         title_elem = article.select_one('.elementor-post__title a')
-        date_elem = article.select_one('.elementor-post-date')
+        date_elem  = article.select_one('.elementor-post-date')
         excerpt_elem = article.select_one('.elementor-post__excerpt p')
 
         title = title_elem.text.strip() if title_elem else ''
@@ -37,8 +44,5 @@ def scrape():
             "excerpt": excerpt
         })
 
-    return jsonify(posts)
-
-if __name__ == "__main__":
-    app.run(debug=True)
+    return posts
 
