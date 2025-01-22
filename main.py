@@ -14,7 +14,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 app = FastAPI()
 
-
 @app.get("/scrape")
 def scrape(url: Optional[str] = None):
     """
@@ -95,10 +94,10 @@ def scrape_adnews_requests(url: str):
     results = []
 
     for art in articles_home:
-        link_tag = art.select_one("a")
+        link_tag  = art.select_one("a")
         title_tag = art.select_one("div.title")
-        desc_tag = art.select_one("div.desc p")
-        img_tag = art.select_one("a img")
+        desc_tag  = art.select_one("div.desc p")
+        img_tag   = art.select_one("a img")
 
         if not link_tag or not title_tag:
             continue
@@ -150,14 +149,16 @@ def scrape_adnews_selenium(url: str):
     # Create a headless Chrome driver
     options = Options()
     options.headless = True
-    # Add more arguments if needed:
+    # If needed, you can add arguments:
     # options.add_argument('--no-sandbox')
     # options.add_argument('--disable-dev-shm-usage')
-    service = Service(ChromeDriverManager().install())
 
+    service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
+
     driver.get(url)
-    time.sleep(5)  # wait for JavaScript to load
+    # Wait a few seconds for JS to load
+    time.sleep(5)
 
     html = driver.page_source
     driver.quit()
@@ -168,10 +169,10 @@ def scrape_adnews_selenium(url: str):
     # 1) Try "Home layout"
     articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
     for art in articles_home:
-        link_tag = art.select_one("a")
+        link_tag  = art.select_one("a")
         title_tag = art.select_one("div.title")
-        desc_tag = art.select_one("div.desc p")
-        img_tag = art.select_one("a img")
+        desc_tag  = art.select_one("div.desc p")
+        img_tag   = art.select_one("a img")
 
         if not link_tag or not title_tag:
             continue
