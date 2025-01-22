@@ -3,4 +3,6 @@ uvicorn
 requests
 beautifulsoup4
 cloudscraper
-certifi
+selenium
+webdriver-manager
+python-chromedriver-binary
