@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 # SELENIUM + WEBDRIVER-MANAGER
 import time
+import uuid
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -27,7 +28,6 @@ def scrape(url: Optional[str] = None):
         "url": "...",
         "description": "...",
         "image": "...",
-        # optionally "content": ...
       }
 
     1) Attempt normal scraping with requests + cloudscraper.
@@ -44,36 +44,28 @@ def scrape(url: Optional[str] = None):
             detail="This scraper is only configured for adnews.com.br"
         )
 
-    # First attempt with requests + cloudscraper
+    # 1) requests approach
     results = scrape_adnews_requests(url)
-
-    # If nothing found, fallback to Selenium
+    # 2) fallback to selenium if empty
     if not results:
         results = scrape_adnews_selenium(url)
 
     # If still empty, return []
     if not results:
-        print("No AdNews results found (requests + selenium).")
+        print("No AdNews results found.")
         return JSONResponse(content=[], status_code=200)
 
     return JSONResponse(content=results, status_code=200)
 
 
 def scrape_adnews_requests(url: str):
-    """
-    Basic attempt using requests + cloudscraper for the AdNews homepage layout
-    or any pages that do not require JavaScript for content.
-    """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-    # 1) Basic requests
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
         print(f"[Requests GET] error: {e}")
         return []
 
-    # 2) Fallback with cloudscraper if status code is 202, 403, or 503
     if resp.status_code in [202, 403, 503]:
         try:
             scraper = cloudscraper.create_scraper()
@@ -82,7 +74,6 @@ def scrape_adnews_requests(url: str):
             print(f"[Cloudscraper] error: {e}")
             return []
 
-    # If still not 200, bail out
     if resp.status_code != 200:
         print(f"[Requests] returned {resp.status_code}")
         return []
@@ -90,7 +81,7 @@ def scrape_adnews_requests(url: str):
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []
 
-    # PART A: "Home layout"
+    # HOME layout
     articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
     for art in articles_home:
         link_tag  = art.select_one("a")
@@ -113,7 +104,7 @@ def scrape_adnews_requests(url: str):
             "image": img
         })
 
-    # PART B: "Search layout" if no home results
+    # SEARCH layout
     if not results:
         articles_search = soup.select("article.elementor-post")
         for post in articles_search:
@@ -140,26 +131,17 @@ def scrape_adnews_requests(url: str):
 
 
 def scrape_adnews_selenium(url: str):
-    """
-    If no results from requests, the page might be JS-based (like ?s=inteligencia+artificial).
-    We'll load with headless Chrome using webdriver-manager to auto-install ChromeDriver.
-    Also fix the 'user data dir' issue by specifying --user-data-dir,
-    plus --no-sandbox to allow running as root on a server.
-    """
     options = Options()
     options.headless = True
-
-    # Let Chrome run under root in a minimal environment
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # Provide a unique user-data-dir, to avoid "already in use" lock
-    options.add_argument("--user-data-dir=/tmp/selenium_chrome_profile")
+    # Approach A: Omit user-data-dir entirely
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
 
     driver.get(url)
-    time.sleep(5)  # Wait a few seconds for JavaScript
+    time.sleep(5)
 
     html = driver.page_source
     driver.quit()
@@ -167,7 +149,7 @@ def scrape_adnews_selenium(url: str):
     soup = BeautifulSoup(html, "html.parser")
     results = []
 
-    # PART A: "Home layout"
+    # HOME layout
     articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
     for art in articles_home:
         link_tag  = art.select_one("a")
@@ -190,7 +172,7 @@ def scrape_adnews_selenium(url: str):
             "image": img
         })
 
-    # PART B: "Search layout"
+    # SEARCH layout
     if not results:
         articles_search = soup.select("article.elementor-post")
         for post in articles_search:
@@ -219,7 +201,7 @@ def scrape_adnews_selenium(url: str):
 def scrape_detail_page(link: str, headers: dict) -> str:
     """
     (Optional) If you want to fetch full article text from detail pages.
-    Adjust selectors to match the final layout of each article.
+    Adjust selectors as needed.
     """
     if not link.startswith("http"):
         return ""
@@ -230,14 +212,12 @@ def scrape_detail_page(link: str, headers: dict) -> str:
             return ""
         detail_soup = BeautifulSoup(detail_resp.text, "html.parser")
 
-        # Example container for detail text
         content_container = detail_soup.select_one("article.post, div.elementor-widget-container")
         if not content_container:
             return ""
 
         paragraphs = content_container.find_all("p")
-        full_text = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
-        return full_text
+        return "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
 
     except Exception:
         return ""
