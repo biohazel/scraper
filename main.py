@@ -25,37 +25,43 @@ def scrape(url: Optional[str] = None):
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"Failed to GET {url} ({e})")
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to GET {url} ({e})"
+        )
 
-    # Se o site retornar 202, tentamos cloudscraper
+    # 2. Se o site retornar 202, tentamos cloudscraper com verify=False (ignora SSL)
     if resp.status_code == 202:
         try:
             scraper = cloudscraper.create_scraper()
-            resp = scraper.get(url, headers=headers, timeout=20)
+            resp = scraper.get(url, headers=headers, timeout=20, verify=False)
         except Exception as e:
-            raise HTTPException(status_code=502, detail=f"Failed with cloudscraper: {e}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed with cloudscraper: {e}"
+            )
 
-    # Se depois disso ainda não for 200, consideramos erro
+    # 3. Se depois disso ainda não for 200, consideramos erro
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
             detail=f"Request returned {resp.status_code}"
         )
 
-    # 2. Parse do HTML via BeautifulSoup
+    # 4. Parse do HTML via BeautifulSoup
     html = resp.text
     soup = BeautifulSoup(html, 'html.parser')
 
     # Exemplo: extrair posts do blog MakeOne
     posts = []
     for article in soup.select('article.elementor-post'):
-        title_elem   = article.select_one('.elementor-post__title a')
-        date_elem    = article.select_one('.elementor-post-date')
+        title_elem = article.select_one('.elementor-post__title a')
+        date_elem = article.select_one('.elementor-post-date')
         excerpt_elem = article.select_one('.elementor-post__excerpt p')
 
-        title   = title_elem.text.strip() if title_elem else ''
-        link    = title_elem['href'] if title_elem else ''
-        date    = date_elem.text.strip() if date_elem else ''
+        title = title_elem.text.strip() if title_elem else ''
+        link = title_elem['href'] if title_elem else ''
+        date = date_elem.text.strip() if date_elem else ''
         excerpt = excerpt_elem.text.strip() if excerpt_elem else ''
 
         posts.append({
@@ -65,5 +71,5 @@ def scrape(url: Optional[str] = None):
             "excerpt": excerpt
         })
 
-    # 3. Retorna a lista de posts com status_code=200
+    # 5. Retorna a lista de posts com status_code=200
     return JSONResponse(content=posts, status_code=200)
