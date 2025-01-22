@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 
 # SELENIUM + WEBDRIVER-MANAGER
 import time
-import uuid
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -30,8 +29,8 @@ def scrape(url: Optional[str] = None):
         "image": "...",
       }
 
-    1) Attempt normal scraping with requests + cloudscraper.
-    2) If no results found, fallback to Selenium headless Chrome (JS).
+    1) Attempt normal scraping with requests + cloudscraper (static HTML).
+    2) If no results found, fallback to Selenium headless Chromium (JS).
     """
 
     if not url:
@@ -44,28 +43,36 @@ def scrape(url: Optional[str] = None):
             detail="This scraper is only configured for adnews.com.br"
         )
 
-    # 1) requests approach
+    # 1) Try requests + cloudscraper approach
     results = scrape_adnews_requests(url)
-    # 2) fallback to selenium if empty
+
+    # 2) If empty, fallback to Selenium
     if not results:
         results = scrape_adnews_selenium(url)
 
-    # If still empty, return []
+    # If still nothing, return []
     if not results:
-        print("No AdNews results found.")
+        print("No AdNews results found (requests + selenium).")
         return JSONResponse(content=[], status_code=200)
 
     return JSONResponse(content=results, status_code=200)
 
 
 def scrape_adnews_requests(url: str):
+    """
+    Simple scraping via requests + cloudscraper for the AdNews homepage
+    or any static (non-JS) pages.
+    """
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+
+    # First attempt with requests
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
         print(f"[Requests GET] error: {e}")
         return []
 
+    # Fallback with cloudscraper if we get certain status codes
     if resp.status_code in [202, 403, 503]:
         try:
             scraper = cloudscraper.create_scraper()
@@ -81,7 +88,7 @@ def scrape_adnews_requests(url: str):
     soup = BeautifulSoup(resp.text, "html.parser")
     results = []
 
-    # HOME layout
+    # --- HOME Layout (div.lista-ultimas.row div.col-12.col-lg-6)
     articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
     for art in articles_home:
         link_tag  = art.select_one("a")
@@ -104,7 +111,7 @@ def scrape_adnews_requests(url: str):
             "image": img
         })
 
-    # SEARCH layout
+    # --- SEARCH Layout (article.elementor-post)
     if not results:
         articles_search = soup.select("article.elementor-post")
         for post in articles_search:
@@ -131,17 +138,27 @@ def scrape_adnews_requests(url: str):
 
 
 def scrape_adnews_selenium(url: str):
+    """
+    If requests approach is empty, we suspect the page requires JavaScript
+    (like ?s=inteligencia+artificial). We'll use headless Chromium instead
+    of Google Chrome. Make sure chromium-browser is installed.
+    """
     options = Options()
     options.headless = True
+
+    # Runs under root in minimal environment
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # Approach A: Omit user-data-dir entirely
+
+    # IMPORTANT: Point to chromium-browser (not google-chrome)
+    # Adjust this path if which chromium-browser is different
+    options.binary_location = "/usr/bin/chromium-browser"
 
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
 
     driver.get(url)
-    time.sleep(5)
+    time.sleep(5)  # Wait for JS to load
 
     html = driver.page_source
     driver.quit()
@@ -149,7 +166,7 @@ def scrape_adnews_selenium(url: str):
     soup = BeautifulSoup(html, "html.parser")
     results = []
 
-    # HOME layout
+    # --- HOME Layout
     articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
     for art in articles_home:
         link_tag  = art.select_one("a")
@@ -172,7 +189,7 @@ def scrape_adnews_selenium(url: str):
             "image": img
         })
 
-    # SEARCH layout
+    # --- SEARCH Layout
     if not results:
         articles_search = soup.select("article.elementor-post")
         for post in articles_search:
