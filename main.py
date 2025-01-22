@@ -2,10 +2,11 @@ from fastapi import FastAPI, HTTPException
 from typing import Optional
 import requests
 from bs4 import BeautifulSoup
+from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-@app.get("/scrape")
+@app.get("/scrape", status_code=200)
 def scrape(url: Optional[str] = None):
     """
     Exemplo de endpoint:
@@ -14,25 +15,20 @@ def scrape(url: Optional[str] = None):
     """
     if not url:
         raise HTTPException(status_code=400, detail="No URL provided")
-    
-    # Definir cabeçalho e timeout (para evitar bloqueios e requisições penduradas)
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
-    
+
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
-        # Pode capturar erros de conexão, DNS, timeout etc.
         raise HTTPException(status_code=502, detail=f"Failed to GET {url} ({e})")
 
     if resp.status_code != 200:
-        # Se o servidor não retornar 200 OK, consideramos um erro
         raise HTTPException(status_code=502, detail=f"Request returned {resp.status_code}")
 
     html = resp.text
-
-    # Parse do HTML via BeautifulSoup
     soup = BeautifulSoup(html, 'html.parser')
 
     # Exemplo: extrair posts do blog MakeOne
@@ -54,5 +50,6 @@ def scrape(url: Optional[str] = None):
             "excerpt": excerpt
         })
 
-    return posts
+    # Return the posts with an explicit 200
+    return JSONResponse(content=posts, status_code=200)
 
