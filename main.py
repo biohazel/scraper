@@ -10,17 +10,22 @@ app = FastAPI()
 @app.get("/scrape")
 def scrape(url: Optional[str] = None):
     """
-    Usage Example:
+    Example:
       GET /scrape?url=https://adnews.com.br/
       GET /scrape?url=https://adnews.com.br/?s=inteligencia+artificial
 
-    Returns a JSON array of news objects (title, url, description, image).
+    Returns a JSON array of news objects. Each object will have:
+      title       - The headline on the listing
+      url         - The link to the full article
+      description - The short excerpt from the listing
+      image       - The thumbnail image if available
+      content     - A larger text from the article detail page
     """
 
     if not url:
         raise HTTPException(status_code=400, detail="No URL provided")
 
-    # *** Only proceed if URL is from adnews.com.br ***
+    # Only handle AdNews to avoid SSL issues on other sites:
     if "adnews.com.br" not in url:
         raise HTTPException(
             status_code=400,
@@ -40,7 +45,7 @@ def scrape(url: Optional[str] = None):
             detail=f"Failed to GET {url} ({e})"
         )
 
-    # 2) If status = 202, 403, or 503, try fallback with cloudscraper
+    # 2) If status = 202, 403, or 503, fallback with cloudscraper
     if resp.status_code in [202, 403, 503]:
         try:
             scraper = cloudscraper.create_scraper()
@@ -51,7 +56,7 @@ def scrape(url: Optional[str] = None):
                 detail=f"Failed with cloudscraper: {e}"
             )
 
-    # 3) If not status 200, error out
+    # 3) If not 200, error
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
@@ -60,10 +65,7 @@ def scrape(url: Optional[str] = None):
 
     soup = BeautifulSoup(resp.text, "html.parser")
 
-    # ------------------------------------------------------------------
-    # 4.1. Layout for AdNews Home:
-    #     "div.lista-ultimas.row div.col-12.col-lg-6"
-    # ------------------------------------------------------------------
+    # -- Part A: Home layout
     articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
 
     results = []
@@ -81,17 +83,18 @@ def scrape(url: Optional[str] = None):
         desc  = desc_tag.get_text(strip=True) if desc_tag else ""
         img   = img_tag.get("src") if img_tag else ""
 
+        # ---- SECOND PASS to get "content" from article's detail page
+        full_content = scrape_detail_page(link, headers)
+
         results.append({
             "title": title,
             "url": link,
             "description": desc,
-            "image": img
+            "image": img,
+            "content": full_content
         })
 
-    # ------------------------------------------------------------------
-    # 4.2. If none found, try layout for search results:
-    #     "section.elementor-section div.elementor-post"
-    # ------------------------------------------------------------------
+    # -- Part B: If no results, try search layout
     if not results:
         articles_search = soup.select("section.elementor-section div.elementor-post")
         for post in articles_search:
@@ -108,18 +111,55 @@ def scrape(url: Optional[str] = None):
             desc  = desc_tag.get_text(strip=True) if desc_tag else ""
             img   = img_tag.get("src") if img_tag else ""
 
+            # Second pass
+            full_content = scrape_detail_page(link, headers)
+
             results.append({
                 "title": title,
                 "url": link,
                 "description": desc,
-                "image": img
+                "image": img,
+                "content": full_content
             })
 
-    # ------------------------------------------------------------------
-    # 5) If still empty, maybe new layout or no results.
-    # ------------------------------------------------------------------
+    # -- If still empty, maybe new layout or no results
     if not results:
         print("No AdNews results found with known selectors.")
         return JSONResponse(content=[], status_code=200)
 
     return JSONResponse(content=results, status_code=200)
+
+
+def scrape_detail_page(link: str, headers: dict) -> str:
+    """
+    Makes a second HTTP request to the article's detail page
+    and tries to extract the full text content.
+    Adjust the selectors inside this function if the layout changes.
+    """
+
+    if not link.startswith("http"):
+        return ""  # just a safety check
+
+    try:
+        # If we face Cloudflare, we might do the fallback again, but let's do a simple approach first:
+        detail_resp = requests.get(link, headers=headers, timeout=10)
+        if detail_resp.status_code != 200:
+            return ""
+
+        detail_soup = BeautifulSoup(detail_resp.text, "html.parser")
+
+        # Example approach: grab paragraphs inside main content container
+        # This is a guess for AdNews detail pages. You might need to refine the selector.
+        content_container = detail_soup.select_one("article.post, div.elementor-widget-container")
+        if not content_container:
+            return ""
+
+        # gather all paragraphs
+        paragraphs = content_container.find_all("p")
+        # join them with a newline or space
+        full_text = "\n".join(p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True))
+
+        return full_text
+
+    except Exception:
+        return ""
