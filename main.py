@@ -4,6 +4,7 @@ import requests
 import cloudscraper
 from bs4 import BeautifulSoup
 from fastapi.responses import JSONResponse
+import ssl
 
 app = FastAPI()
 
@@ -17,11 +18,9 @@ def scrape(url: Optional[str] = None):
     if not url:
         raise HTTPException(status_code=400, detail="No URL provided")
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-    }
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. Tentar com requests
+    # 1. Tentar primeiro com requests
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
@@ -30,18 +29,21 @@ def scrape(url: Optional[str] = None):
             detail=f"Failed to GET {url} ({e})"
         )
 
-    # 2. Se o site retornar 202, tentamos cloudscraper com verify=False (ignora SSL)
+    # 2. Se retornar 202, tentamos cloudscraper com um SSL context unverified
     if resp.status_code == 202:
         try:
-            scraper = cloudscraper.create_scraper()
-            resp = scraper.get(url, headers=headers, timeout=20, verify=False)
+            # Cria um contexto SSL que não verifica nada (perigoso!)
+            ssl_context = ssl._create_unverified_context()
+            # Cria o scraper com esse contexto
+            scraper = cloudscraper.create_scraper(ssl_context=ssl_context)
+            resp = scraper.get(url, headers=headers, timeout=20)
         except Exception as e:
             raise HTTPException(
                 status_code=502,
                 detail=f"Failed with cloudscraper: {e}"
             )
 
-    # 3. Se depois disso ainda não for 200, consideramos erro
+    # 3. Se depois disso não for 200, retornamos erro
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
@@ -55,13 +57,13 @@ def scrape(url: Optional[str] = None):
     # Exemplo: extrair posts do blog MakeOne
     posts = []
     for article in soup.select('article.elementor-post'):
-        title_elem = article.select_one('.elementor-post__title a')
-        date_elem = article.select_one('.elementor-post-date')
+        title_elem   = article.select_one('.elementor-post__title a')
+        date_elem    = article.select_one('.elementor-post-date')
         excerpt_elem = article.select_one('.elementor-post__excerpt p')
 
-        title = title_elem.text.strip() if title_elem else ''
-        link = title_elem['href'] if title_elem else ''
-        date = date_elem.text.strip() if date_elem else ''
+        title   = title_elem.text.strip() if title_elem else ''
+        link    = title_elem['href'] if title_elem else ''
+        date    = date_elem.text.strip() if date_elem else ''
         excerpt = excerpt_elem.text.strip() if excerpt_elem else ''
 
         posts.append({
@@ -71,5 +73,5 @@ def scrape(url: Optional[str] = None):
             "excerpt": excerpt
         })
 
-    # 5. Retorna a lista de posts com status_code=200
+    # 5. Retorna os posts com status_code=200
     return JSONResponse(content=posts, status_code=200)
