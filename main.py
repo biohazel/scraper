@@ -4,7 +4,6 @@ import requests
 import cloudscraper
 from bs4 import BeautifulSoup
 from fastapi.responses import JSONResponse
-import ssl
 
 app = FastAPI()
 
@@ -14,13 +13,16 @@ def scrape(url: Optional[str] = None):
     Exemplo de endpoint:
       GET /scrape?url=https://makeone.com.br/blog/
     Retorna um array JSON de posts.
+
+    IMPORTANTE: 'verify=False' ignora checks de certificado TLS.
+                Usar apenas como POC. Não recomendado em produção.
     """
     if not url:
         raise HTTPException(status_code=400, detail="No URL provided")
 
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
-    # 1. Tentar primeiro com requests
+    # 1. Primeira tentativa com requests
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
@@ -29,21 +31,19 @@ def scrape(url: Optional[str] = None):
             detail=f"Failed to GET {url} ({e})"
         )
 
-    # 2. Se retornar 202, tentamos cloudscraper com um SSL context unverified
+    # 2. Se for 202, vamos tentar cloudscraper, com verify=False
     if resp.status_code == 202:
         try:
-            # Cria um contexto SSL que não verifica nada (perigoso!)
-            ssl_context = ssl._create_unverified_context()
-            # Cria o scraper com esse contexto
-            scraper = cloudscraper.create_scraper(ssl_context=ssl_context)
-            resp = scraper.get(url, headers=headers, timeout=20)
+            scraper = cloudscraper.create_scraper()
+            # Aqui forçamos verify=False
+            resp = scraper.get(url, headers=headers, timeout=20, verify=False)
         except Exception as e:
             raise HTTPException(
                 status_code=502,
                 detail=f"Failed with cloudscraper: {e}"
             )
 
-    # 3. Se depois disso não for 200, retornamos erro
+    # 3. Se ainda não for 200, retornamos erro
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
@@ -73,5 +73,4 @@ def scrape(url: Optional[str] = None):
             "excerpt": excerpt
         })
 
-    # 5. Retorna os posts com status_code=200
     return JSONResponse(content=posts, status_code=200)
