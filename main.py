@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from typing import Optional
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 from fastapi.responses import JSONResponse
 
@@ -20,14 +21,28 @@ def scrape(url: Optional[str] = None):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
 
+    # 1. Tentar com requests
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
         raise HTTPException(status_code=502, detail=f"Failed to GET {url} ({e})")
 
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Request returned {resp.status_code}")
+    # Se o site retornar 202, tentamos cloudscraper
+    if resp.status_code == 202:
+        try:
+            scraper = cloudscraper.create_scraper()
+            resp = scraper.get(url, headers=headers, timeout=20)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Failed with cloudscraper: {e}")
 
+    # Se depois disso ainda não for 200, consideramos erro
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Request returned {resp.status_code}"
+        )
+
+    # 2. Parse do HTML via BeautifulSoup
     html = resp.text
     soup = BeautifulSoup(html, 'html.parser')
 
@@ -50,6 +65,5 @@ def scrape(url: Optional[str] = None):
             "excerpt": excerpt
         })
 
-    # Return the posts with an explicit 200
+    # 3. Retorna a lista de posts com status_code=200
     return JSONResponse(content=posts, status_code=200)
-
