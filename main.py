@@ -10,21 +10,28 @@ app = FastAPI()
 @app.get("/scrape")
 def scrape(url: Optional[str] = None):
     """
-    Exemplo de chamada:
+    Usage Example:
       GET /scrape?url=https://adnews.com.br/
       GET /scrape?url=https://adnews.com.br/?s=inteligencia+artificial
 
-    Retorna um JSON array de notícias (title, url, description, image).
+    Returns a JSON array of news objects (title, url, description, image).
     """
 
     if not url:
         raise HTTPException(status_code=400, detail="No URL provided")
 
+    # *** Only proceed if URL is from adnews.com.br ***
+    if "adnews.com.br" not in url:
+        raise HTTPException(
+            status_code=400,
+            detail="This scraper is only configured for adnews.com.br"
+        )
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
 
-    # 1. Primeira tentativa com requests
+    # 1) First attempt with requests
     try:
         resp = requests.get(url, headers=headers, timeout=10)
     except requests.RequestException as e:
@@ -33,7 +40,7 @@ def scrape(url: Optional[str] = None):
             detail=f"Failed to GET {url} ({e})"
         )
 
-    # 2. Fallback com cloudscraper se status = 202, 403 ou 503
+    # 2) If status = 202, 403, or 503, try fallback with cloudscraper
     if resp.status_code in [202, 403, 503]:
         try:
             scraper = cloudscraper.create_scraper()
@@ -44,18 +51,17 @@ def scrape(url: Optional[str] = None):
                 detail=f"Failed with cloudscraper: {e}"
             )
 
-    # 3. Verifica status final
+    # 3) If not status 200, error out
     if resp.status_code != 200:
         raise HTTPException(
             status_code=502,
             detail=f"Request returned {resp.status_code}"
         )
 
-    html = resp.text
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(resp.text, "html.parser")
 
     # ------------------------------------------------------------------
-    # 4.1. Primeiro seletor (Home do AdNews):
+    # 4.1. Layout for AdNews Home:
     #     "div.lista-ultimas.row div.col-12.col-lg-6"
     # ------------------------------------------------------------------
     articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
@@ -83,19 +89,13 @@ def scrape(url: Optional[str] = None):
         })
 
     # ------------------------------------------------------------------
-    # 4.2. Se não encontrou nada, tenta layout de busca:
+    # 4.2. If none found, try layout for search results:
     #     "section.elementor-section div.elementor-post"
-    #
-    # Observação: em páginas de busca AdNews, cada post pode ter
-    # <article class="elementor-post ...">
-    # ou "div.elementor-post__card" etc.
     # ------------------------------------------------------------------
     if not results:
         articles_search = soup.select("section.elementor-section div.elementor-post")
-
         for post in articles_search:
             link_tag = post.select_one("a.elementor-post__thumbnail__link, a.elementor-post__read-more, a.elementor-post__title__link")
-            # tentamos várias classes que podem surgir
             title_tag = post.select_one(".elementor-post__title a")
             desc_tag  = post.select_one(".elementor-post__excerpt p")
             img_tag   = post.select_one(".elementor-post__thumbnail__link img")
@@ -115,12 +115,11 @@ def scrape(url: Optional[str] = None):
                 "image": img
             })
 
-    # Se ainda não encontrou nada, pode ser que o layout tenha mudado
-    # ou é outra URL que não bate com os seletores acima.
+    # ------------------------------------------------------------------
+    # 5) If still empty, maybe new layout or no results.
+    # ------------------------------------------------------------------
     if not results:
-        print("Nenhum resultado encontrado com os seletores conhecidos.")
-        # Você pode retornar um array vazio mesmo assim:
+        print("No AdNews results found with known selectors.")
         return JSONResponse(content=[], status_code=200)
 
-    # 5. Retorno final
     return JSONResponse(content=results, status_code=200)
