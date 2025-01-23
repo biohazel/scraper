@@ -4,62 +4,76 @@ import requests
 import cloudscraper
 from bs4 import BeautifulSoup
 from fastapi.responses import JSONResponse
-import time
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from selenium.common.exceptions import TimeoutException, WebDriverException
+import time
 
 app = FastAPI()
 
+# Configurações globais
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+REQUEST_TIMEOUT = 15
+SELENIUM_TIMEOUT = 30
+
 @app.get("/scrape")
-def scrape(url: Optional[str] = None):
+async def scrape(url: Optional[str] = None):
+    """
+    Endpoint principal para scraping do AdNews
+    """
     if not url:
-        raise HTTPException(status_code=400, detail="No URL provided")
+        raise HTTPException(status_code=400, detail="URL parameter is required")
 
     if "adnews.com.br" not in url:
-        raise HTTPException(
-            status_code=400,
-            detail="This scraper is only configured for adnews.com.br"
-        )
+        raise HTTPException(status_code=400, detail="Only adnews.com.br domains are allowed")
 
+    # Primeira tentativa com requests/cloudscraper
     results = scrape_adnews_requests(url)
-
+    
+    # Fallback para Selenium se necessário
     if not results:
         results = scrape_adnews_selenium(url)
-
-    if not results:
-        return JSONResponse(content=[], status_code=200)
-
-    return JSONResponse(content=results, status_code=200)
+    
+    return JSONResponse(content=results if results else [], status_code=200)
 
 def scrape_adnews_requests(url: str):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-    
+    """
+    Método usando Requests + Cloudscraper
+    """
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        headers = {"User-Agent": USER_AGENT}
         
-        if resp.status_code in [202, 403, 503]:
+        # Tentativa inicial com requests
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        
+        # Fallback para cloudscraper se necessário
+        if response.status_code in [403, 429, 503]:
             scraper = cloudscraper.create_scraper()
-            resp = scraper.get(url, headers=headers, timeout=20, verify=False)
-
-        if resp.status_code != 200:
+            response = scraper.get(url, headers=headers, timeout=REQUEST_TIMEOUT*2)
+        
+        if response.status_code != 200:
             return []
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-        return parse_articles(soup)
-
+            
+        return parse_articles(BeautifulSoup(response.text, 'html.parser'))
+        
     except Exception as e:
-        print(f"Request error: {str(e)}")
+        print(f"Requests error: {str(e)}")
         return []
 
 def scrape_adnews_selenium(url: str):
+    """
+    Método usando Selenium para JS-rendered content
+    """
     options = Options()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
-    options.add_argument("--remote-debugging-port=9222")
-    options.add_argument("--single-process")
     options.add_argument("--headless=new")
+    options.add_argument(f"user-agent={USER_AGENT}")
     options.binary_location = "/usr/bin/chromium"
 
     service = Service(executable_path="/usr/lib/chromium/chromedriver")
@@ -67,53 +81,69 @@ def scrape_adnews_selenium(url: str):
 
     try:
         driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(30)
+        driver.set_page_load_timeout(SELENIUM_TIMEOUT)
+        
         driver.get(url)
-        time.sleep(3)
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+        
+        # Espera dinâmica para conteúdo carregar
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.lista-ultimas, article.elementor-post"))
+        )
+        
+        # Scroll para carregar conteúdo JS
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(1)
+        
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
         return parse_articles(soup)
         
-    except Exception as e:
+    except TimeoutException:
+        print("Timeout waiting for page content")
+        return []
+    except WebDriverException as e:
         print(f"Selenium error: {str(e)}")
         return []
-        
     finally:
         if driver:
             driver.quit()
 
-def parse_articles(soup):
+def parse_articles(soup: BeautifulSoup):
+    """
+    Analisa o conteúdo HTML e extrai os artigos
+    """
     results = []
     
-    # Home layout
-    articles_home = soup.select("div.lista-ultimas.row div.col-12.col-lg-6")
-    for art in articles_home:
-        link_tag = art.select_one("a")
-        title_tag = art.select_one("div.title")
-        desc_tag = art.select_one("div.desc p")
-        img_tag = art.select_one("a img")
-
-        if link_tag and title_tag:
-            results.append({
-                "title": title_tag.get_text(strip=True),
-                "url": link_tag.get("href", "").strip(),
-                "description": desc_tag.get_text(strip=True) if desc_tag else "",
-                "image": img_tag.get("src") if img_tag else ""
-            })
-
-    # Search layout
-    if not results:
-        articles_search = soup.select("article.elementor-post")
-        for post in articles_search:
-            title_tag = post.select_one(".elementor-post__title a")
-            desc_tag = post.select_one(".elementor-post__excerpt p")
-            img_tag = post.select_one(".elementor-post__thumbnail__link img")
-
-            if title_tag:
-                results.append({
-                    "title": title_tag.get_text(strip=True),
-                    "url": title_tag.get("href", "").strip(),
-                    "description": desc_tag.get_text(strip=True) if desc_tag else "",
-                    "image": img_tag.get("src") if img_tag else ""
-                })
-
-    return results
+    # Novo seletor para layout atualizado
+    articles = soup.select("""
+        div.lista-ultimas .card-noticia,
+        article.elementor-post,
+        div.post-item
+    """)
+    
+    for article in articles:
+        try:
+            # Extração robusta com fallbacks
+            link = article.select_one("a[href]")
+            title = article.select_one("h2, h3, .title")
+            desc = article.select_one("p, .excerpt, .desc")
+            img = article.select_one("img[src]")
+            
+            if not link or not title:
+                continue
+                
+            result = {
+                "title": title.get_text(strip=True),
+                "url": link['href'].strip(),
+                "description": desc.get_text(strip=True) if desc else "",
+                "image": img['src'].strip() if img else ""
+            }
+            
+            # Validação básica de URL
+            if result["url"].startswith("http"):
+                results.append(result)
+                
+        except Exception as e:
+            print(f"Error parsing article: {str(e)}")
+            continue
+    
+    return results[:20]  # Retorna no máximo 20 resultados
