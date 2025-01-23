@@ -22,9 +22,6 @@ SELENIUM_TIMEOUT = 30
 
 @app.get("/scrape")
 async def scrape(url: Optional[str] = None):
-    """
-    Endpoint principal para scraping do AdNews
-    """
     if not url:
         raise HTTPException(status_code=400, detail="URL parameter is required")
 
@@ -41,16 +38,10 @@ async def scrape(url: Optional[str] = None):
     return JSONResponse(content=results if results else [], status_code=200)
 
 def scrape_adnews_requests(url: str):
-    """
-    Método usando Requests + Cloudscraper
-    """
     try:
         headers = {"User-Agent": USER_AGENT}
-        
-        # Tentativa inicial com requests
         response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         
-        # Fallback para cloudscraper se necessário
         if response.status_code in [403, 429, 503]:
             scraper = cloudscraper.create_scraper()
             response = scraper.get(url, headers=headers, timeout=REQUEST_TIMEOUT*2)
@@ -65,18 +56,16 @@ def scrape_adnews_requests(url: str):
         return []
 
 def scrape_adnews_selenium(url: str):
-    """
-    Método usando Selenium para JS-rendered content
-    """
     options = Options()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
     options.add_argument("--headless=new")
+    options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument(f"user-agent={USER_AGENT}")
     options.binary_location = "/usr/bin/chromium"
 
-    service = Service(executable_path="/usr/lib/chromium/chromedriver")
+    service = Service(executable_path="/usr/bin/chromedriver")  # Caminho corrigido
     driver = None
 
     try:
@@ -85,20 +74,17 @@ def scrape_adnews_selenium(url: str):
         
         driver.get(url)
         
-        # Espera dinâmica para conteúdo carregar
-        WebDriverWait(driver, 15).until(
+        # Espera dinâmica com scroll
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "div.lista-ultimas, article.elementor-post"))
         )
-        
-        # Scroll para carregar conteúdo JS
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(1)
+        time.sleep(2)
         
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        return parse_articles(soup)
+        return parse_articles(BeautifulSoup(driver.page_source, 'html.parser'))
         
     except TimeoutException:
-        print("Timeout waiting for page content")
+        print("Timeout: Conteúdo não carregado")
         return []
     except WebDriverException as e:
         print(f"Selenium error: {str(e)}")
@@ -108,27 +94,22 @@ def scrape_adnews_selenium(url: str):
             driver.quit()
 
 def parse_articles(soup: BeautifulSoup):
-    """
-    Analisa o conteúdo HTML e extrai os artigos
-    """
     results = []
-    
-    # Novo seletor para layout atualizado
     articles = soup.select("""
         div.lista-ultimas .card-noticia,
         article.elementor-post,
-        div.post-item
+        div.post-item,
+        div.col-12.col-lg-6
     """)
     
     for article in articles:
         try:
-            # Extração robusta com fallbacks
             link = article.select_one("a[href]")
-            title = article.select_one("h2, h3, .title")
-            desc = article.select_one("p, .excerpt, .desc")
+            title = article.select_one("h1, h2, h3, .title, .elementor-post__title")
+            desc = article.select_one("p, .excerpt, .desc, .elementor-post__excerpt")
             img = article.select_one("img[src]")
             
-            if not link or not title:
+            if not (link and title):
                 continue
                 
             result = {
@@ -138,12 +119,11 @@ def parse_articles(soup: BeautifulSoup):
                 "image": img['src'].strip() if img else ""
             }
             
-            # Validação básica de URL
             if result["url"].startswith("http"):
                 results.append(result)
                 
         except Exception as e:
-            print(f"Error parsing article: {str(e)}")
+            print(f"Parsing error: {str(e)}")
             continue
     
-    return results[:20]  # Retorna no máximo 20 resultados
+    return results[:15]  # Limita para 15 resultados

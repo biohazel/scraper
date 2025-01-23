@@ -1,5 +1,6 @@
 FROM python:3.10-slim
 
+# Instala dependências essenciais
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     chromium-driver \
@@ -15,17 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     libasound2 \
     libdrm2 \
-    libexpat1 \
-    libfontconfig1 \
-    libglib2.0-0 \
     libharfbuzz0b \
-    libnspr4 \
-    libpango-1.0-0 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxrandr2 \
-    && rm -rf /var/lib/apt/lists/*
+    # Corrige caminho do chromedriver
+    && ln -s /usr/lib/chromium/chromedriver /usr/bin/chromedriver
 
 WORKDIR /app
 COPY requirements.txt .
