@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# Instala dependências essenciais
+# Instala dependências do Chromium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     chromium-driver \
@@ -15,9 +15,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     xdg-utils \
     libasound2 \
-    libdrm2 \
-    libharfbuzz0b \
-    # Corrige caminho do chromedriver
     && ln -s /usr/lib/chromium/chromedriver /usr/bin/chromedriver
 
 WORKDIR /app
